@@ -2,7 +2,7 @@
 # File: build.sh
 # Author: github.com/annadostoevskaya
 # Date: 08/29/2023 21:26:46
-# Last Modified Date: 09/06/2023 21:22:24
+# Last Modified Date: 09/07/2023 00:43:08
 
 
 set -ex
@@ -16,12 +16,11 @@ PSPSDK=$(psp-config --pspsdk-path)
 
 pushd "./$BUILD_DIR"
 
-psp-gcc -I$PSPDEV/psp/include -I$PSPSDK/include \
+psp-g++ -I$PSPDEV/psp/include -I$PSPSDK/include \
     -G0 -Wall -Wextra -Werror \
-    -DDEBUG_BUILD \
     -D_PSP_FW_VERSION=150 -g -c -o main.o $SRC/psp_main.cpp
 
-psp-gcc -I$PSPDEV/psp/include -I$PSPSDK/include \
+psp-g++ -I$PSPDEV/psp/include -I$PSPSDK/include \
     -g -G0 -Wall -D_PSP_FW_VERSION=150  \
     -L$PSPDEV/psp/lib -L$PSPSDK/lib -specs=$PSPSDK/lib/prxspecs \
     -Wl,-q,-T$PSPSDK/lib/linkfile.prx  -Wl,-zmax-page-size=128  \
