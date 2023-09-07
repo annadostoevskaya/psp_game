@@ -2,7 +2,7 @@
 # File: build.sh
 # Author: github.com/annadostoevskaya
 # Date: 08/29/2023 21:26:46
-# Last Modified Date: 09/07/2023 00:43:08
+# Last Modified Date: 09/07/2023 23:36:51
 
 
 set -ex
@@ -18,6 +18,7 @@ pushd "./$BUILD_DIR"
 
 psp-g++ -I$PSPDEV/psp/include -I$PSPSDK/include \
     -G0 -Wall -Wextra -Werror \
+    -DDEBUG_BUILD \
     -D_PSP_FW_VERSION=150 -g -c -o main.o $SRC/psp_main.cpp
 
 psp-g++ -I$PSPDEV/psp/include -I$PSPSDK/include \

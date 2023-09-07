@@ -2,7 +2,7 @@
  * File: psp_main.cpp
  * Author: github.com/annadostoevskaya
  * Date: 08/29/2023 21:38:27
- * Last Modified Date: 09/07/2023 01:38:40
+ * Last Modified Date: 09/07/2023 23:34:19
  */
 
 #include <pspkernel.h>
@@ -110,27 +110,28 @@ int main(int argc, char *argv[])
             screen.buffer[i] = 0x0;
         }
 
+#if DEBUG_BUILD
+        pspDebugScreenInitEx(screen.buffer, PSP_DISPLAY_PIXEL_FORMAT_8888, 0);
+        // pspDebugScreenPrintf("Hello\n");
+        SceFloat32 FPS = 1000.0f / deltaTime;
+        pspDebugScreenPrintf("FPS: %f\n", FPS);
+        // pspDebugScreenPrintf("frameTime: %f ms\n", frameTime);
+        pspDebugScreenPrintf("dt: %f ms\n", deltaTime);
+        // pspDebugScreenPrintf("delay: %fms\n", (SceFloat32)delay / 1000.0f);
+#endif
+
         gtick(&screen, 1.0f/60.0f);
         tiny_renderer_test(&screen);
         
         // tick
         sceRtcGetCurrentTick(&curTick);
         deltaTime = psp_calcDeltaTime(curTick, lastTick);
-        s32 delay = (s32)(1000.0f * (frameTime - deltaTime));
-        if (delay > 0)
+        // FIXME(annad): Difficult bug in this part. FPU Exception!
+        SceFloat32 delay = (1000.0f * (frameTime - deltaTime));
+        if (delay > 0.0f)
         {
-            sceKernelDelayThread(delay);
+            sceKernelDelayThread((u32)delay);
         }
-
-#if DEBUG_BUILD
-        pspDebugScreenInitEx(screen.buffer, PSP_DISPLAY_PIXEL_FORMAT_8888, 0);
-        pspDebugScreenPrintf("Hello\n");
-        SceFloat32 realFps = 1000.0f / deltaTime;
-        pspDebugScreenPrintf("Real FPS: %f\n", realFps);
-        pspDebugScreenPrintf("frameTime: %f ms\n", frameTime);
-        pspDebugScreenPrintf("deltaTime: %f ms\n", deltaTime);
-        pspDebugScreenPrintf("delay: %fms\n", (SceFloat32)delay / 1000.0f);
-#endif
 
         sceRtcGetCurrentTick(&curTick);
         deltaTime = psp_calcDeltaTime(curTick, lastTick);
