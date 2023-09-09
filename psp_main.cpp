@@ -2,7 +2,7 @@
  * File: psp_main.cpp
  * Author: github.com/annadostoevskaya
  * Date: 08/29/2023 21:38:27
- * Last Modified Date: 09/07/2023 23:34:19
+ * Last Modified Date: 09/10/2023 18:31:41
  */
 
 #include <pspkernel.h>
@@ -15,9 +15,6 @@
 
 PSP_MODULE_INFO("TINYRENDERER", PSP_MODULE_USER, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
-
-#define TRUE  1
-#define FALSE 0
 
 const int pspScreenWidth = 480; // 480*272*sizeof(int) =  510KB, 
 const int pspScreenHeight = 272; // ~ x 2 ~ 1MB for double buffering
@@ -45,10 +42,161 @@ struct Screen
     u16 height;
 };
 
-void gtick(Screen *screen, float dt)
+enum AssetState
+{
+    ASSET_STATE_INACTIVE = 0,
+    ASSET_STATE_REQUESTED,
+    ASSET_STATE_RESOLVED,
+    ASSET_STATE_UPLOADING,
+    ASSET_STATE_UPLOADED,
+    ASSET_STATE_COMPLETED,
+    ASSET_STATE_RELEASED,
+
+    ASSET_STATE_COUNT,
+    ASSET_STATE_UNDEFINED
+};
+
+// TODO(annad): Is it make sense?..
+const int asset_path_str_size = 64;
+char asset_path[asset_path_str_size];
+
+struct Asset
+{
+    void *ctx;
+    char *path;
+    char *data;
+
+    int size;
+    int uploaded;
+
+    AssetState state;
+};
+
+void write_str(char *dst_str, size_t dst_str_sz, const char *src_str)
+{
+    while (dst_str_sz-- && *src_str != '\0')
+        *dst_str++ = *src_str++;
+}
+
+void asset_request(Asset *asset, const char *respath)
+{
+    write_str(asset->path, asset_path_str_size, respath);
+    asset->data = NULL;
+    asset->uploaded = 0;
+    asset->size = 0;
+    asset->state = ASSET_STATE_REQUESTED;
+}
+
+void asset_upload(Asset *asset, void *dst)
+{
+    asset->data = (char*)dst;
+    asset->state = ASSET_STATE_UPLOADING;
+}
+
+void asset_complete(Asset *asset)
+{
+    asset->data = NULL;
+    asset->uploaded = 0;
+    asset->size = 0;
+    asset->state = ASSET_STATE_COMPLETED;
+}
+
+enum ResourceState
+{
+    RESOURCE_STATE_INACTIVE,
+    RESOURCE_STATE_COMPLETED,
+
+    RESOURCE_STATE_COUNT,
+    RESOURCE_STATE_UNDEFINED
+};
+
+struct Resource
+{
+    char *path;
+    char *data;
+    int size;
+
+    ResourceState state;
+};
+
+void gtick(Screen *screen, Asset *asset, float dt)
 {
     (void)screen; 
+    (void)asset;
     (void)(dt);
+
+    static int game_state = 0;
+    static Resource resources[1];
+    static unsigned int current_resource = 0;
+
+    switch (game_state)
+    {
+        case 0:
+        {
+            resources[0].path = (char*)malloc(asset_path_str_size);
+            write_str(resources[0].path, asset_path_str_size, "./OBJ/AFRICAN_HEAD.OBJ");
+            resources[0].state = RESOURCE_STATE_INACTIVE;
+            printf("%s\n", resources[0].path);
+
+            game_state = 1;
+        } break;
+
+        case 1:
+        {
+            if (asset->state == ASSET_STATE_INACTIVE)
+            {
+                if (current_resource < (sizeof(resources) / sizeof(resources[0]))
+                    && resources[current_resource].state == RESOURCE_STATE_INACTIVE)
+                {
+                    asset_request(asset, resources[current_resource].path);
+                }
+            }
+
+            if (asset->state == ASSET_STATE_RESOLVED)
+            {
+                void *data = malloc(asset->size); // alloc memory
+                asset_upload(asset, data);
+            }
+
+            if (asset->state == ASSET_STATE_UPLOADING)
+            {
+                float percent = 100.0f * (float)asset->uploaded / (float)asset->size;
+                printf("Uploading resource %s: %.2f\r", asset->path, percent);
+                fflush(stdout);
+            }
+
+            if (asset->state == ASSET_STATE_UPLOADED)
+            {
+                printf("Uploading resource %s: [COMPLETE]\n", asset->path);
+                resources[current_resource].data = asset->data; // pick up data
+                resources[current_resource].size = asset->size;
+                resources[current_resource].state = RESOURCE_STATE_COMPLETED;
+                asset_complete(asset);
+            }
+            
+            if (asset->state == ASSET_STATE_RELEASED)
+            {
+                current_resource += 1;
+                asset->state = ASSET_STATE_INACTIVE;
+            }
+
+            if (current_resource == (sizeof(resources) / sizeof(resources[0])))
+                game_state = 2;
+            
+        } break;
+
+        case 2:
+        {
+            printf("resource:%s\n", resources[0].path);
+            printf("size:%d\n", resources[0].size);
+            game_state = 3;
+        }
+
+        default:
+        {
+
+        } break;
+    }
 
     // game
 }
@@ -79,21 +227,14 @@ int main(int argc, char *argv[])
     screen.size = screenBufferSize;
     screen.width = pspLineSize; // pspScreenWidth;
     screen.height = pspScreenHeight;
-    /*
-    SceUID astFileHandler = sceIoOpen("./ASSETS.AST", PSP_O_RDONLY, 0777);
-    size_t storageSize = 4 * 1024 * 1024;
-    u8 *storage = (u8*)malloc(storageSize);
-    if (astFileHandler > 0)
-    {
-        sceIoRead(astFileHandler, storage, storageSize);
-    }
-    else
-    {
-        // TODO(annad): Error handling!
-        return -1;
-    }
-    */
-    while (TRUE)
+
+    Asset asset;
+    asset.ctx = NULL;
+    asset.data = NULL;
+    asset.state = ASSET_STATE_INACTIVE;
+    asset.path = asset_path;
+
+    for (;;)
     {
         // rendering, switch buffer
         sceDisplaySetFrameBuf((void*)screen.buffer, 
@@ -120,8 +261,71 @@ int main(int argc, char *argv[])
         // pspDebugScreenPrintf("delay: %fms\n", (SceFloat32)delay / 1000.0f);
 #endif
 
-        gtick(&screen, 1.0f/60.0f);
-        tiny_renderer_test(&screen);
+        gtick(&screen, &asset, 1.0f/60.0f);
+
+        // psp asset processing
+        switch (asset.state)
+        {
+            case ASSET_STATE_INACTIVE:
+            {
+                // ... 
+            } break;
+
+            case ASSET_STATE_REQUESTED:
+            {
+                if (asset.ctx != NULL) 
+                    break;
+
+                SceIoStat filestat;
+                if (sceIoGetstat(asset.path, &filestat) < 0)
+                {
+                    asset.state = ASSET_STATE_UNDEFINED;
+                    break;
+                }
+
+                asset.size = filestat.st_size;
+                asset.ctx = malloc(sizeof(SceUID));
+                SceUID *fhandler = (SceUID*)asset.ctx;
+                *fhandler = sceIoOpen(asset.path, PSP_O_RDONLY, 0777);
+
+                asset.state = ASSET_STATE_RESOLVED;
+            } break;
+
+            case ASSET_STATE_UPLOADING:
+            {
+                SceUID fhandler = *((SceUID*)asset.ctx);
+                if (asset.data == NULL)
+                {
+                    asset.state = ASSET_STATE_UNDEFINED;
+                    break;
+                }
+
+                void *cursor = (void*)(asset.data + asset.uploaded);
+                int chunk_size = 1024;
+                asset.uploaded += sceIoRead(fhandler, cursor, chunk_size);
+
+                if (asset.size == asset.uploaded)
+                    asset.state = ASSET_STATE_UPLOADED;
+            } break;
+
+            case ASSET_STATE_COMPLETED:
+            {
+                SceUID fhandler = *((SceUID*)asset.ctx);
+                if (sceIoClose(fhandler) < 0)
+                    asset.state = ASSET_STATE_UNDEFINED;
+
+                free(asset.ctx);
+                asset.ctx = NULL;
+                asset.state = ASSET_STATE_RELEASED;
+            } break;
+
+            default:
+            {
+                asset.state = ASSET_STATE_UNDEFINED;
+            } break;
+        }
+
+        //tiny_renderer_test(&screen);
         
         // tick
         sceRtcGetCurrentTick(&curTick);
