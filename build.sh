@@ -2,7 +2,7 @@
 # File: build.sh
 # Author: github.com/annadostoevskaya
 # Date: 08/29/2023 21:26:46
-# Last Modified Date: 09/07/2023 23:36:51
+# Last Modified Date: 09/10/2023 19:10:16
 
 
 set -ex
@@ -26,7 +26,7 @@ psp-g++ -I$PSPDEV/psp/include -I$PSPSDK/include \
     -L$PSPDEV/psp/lib -L$PSPSDK/lib -specs=$PSPSDK/lib/prxspecs \
     -Wl,-q,-T$PSPSDK/lib/linkfile.prx  -Wl,-zmax-page-size=128  \
     main.o $PSPSDK/lib/prxexports.o  \
-    -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpspnet -lpspnet_apctl -o main.elf
+    -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpspnet -lpspnet_apctl -lpspgu -o main.elf
 
 psp-fixup-imports main.elf
 psp-prxgen main.elf main.prx

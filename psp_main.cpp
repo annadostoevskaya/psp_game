@@ -2,10 +2,11 @@
  * File: psp_main.cpp
  * Author: github.com/annadostoevskaya
  * Date: 08/29/2023 21:38:27
- * Last Modified Date: 09/10/2023 18:31:41
+ * Last Modified Date: 09/10/2023 20:46:27
  */
 
 #include <pspkernel.h>
+#include <pspsysmem_kernel.h>
 #include <pspmoduleinfo.h>
 #include <pspdisplay.h>
 #include <pspge.h>
@@ -119,6 +120,51 @@ struct Resource
     ResourceState state;
 };
 
+void asset_processing(Asset *asset, Resource *res)
+{
+    switch (asset->state)
+    {
+        case ASSET_STATE_REQUESTED:
+        case ASSET_STATE_UPLOADING:
+        case ASSET_STATE_COMPLETED:
+        {
+            // ...
+        } break;
+
+        case ASSET_STATE_INACTIVE:
+        {
+            if (res->state == RESOURCE_STATE_INACTIVE)
+            {
+                asset_request(asset, res->path);
+            }
+        } break;
+
+        case ASSET_STATE_RESOLVED:
+        {
+            void *data = malloc(asset->size); // TODO(annad): alloc memory
+            asset_upload(asset, data);
+        } break;
+
+        case ASSET_STATE_UPLOADED:
+        {
+            res->data = asset->data; // pick up data
+            res->size = asset->size;
+            res->state = RESOURCE_STATE_COMPLETED;
+            asset_complete(asset);
+        } break;
+
+        case ASSET_STATE_RELEASED:
+        {
+            asset->state = ASSET_STATE_INACTIVE;
+        } break;
+
+        default:
+        {
+            asset->state = ASSET_STATE_UNDEFINED;
+        } break;
+    }
+}
+
 void gtick(Screen *screen, Asset *asset, float dt)
 {
     (void)screen; 
@@ -126,8 +172,8 @@ void gtick(Screen *screen, Asset *asset, float dt)
     (void)(dt);
 
     static int game_state = 0;
-    static Resource resources[1];
-    static unsigned int current_resource = 0;
+    static Resource resources[2];
+    static int curres_idx = 0;
 
     switch (game_state)
     {
@@ -136,53 +182,39 @@ void gtick(Screen *screen, Asset *asset, float dt)
             resources[0].path = (char*)malloc(asset_path_str_size);
             write_str(resources[0].path, asset_path_str_size, "./OBJ/AFRICAN_HEAD.OBJ");
             resources[0].state = RESOURCE_STATE_INACTIVE;
-            printf("%s\n", resources[0].path);
+
+            resources[1].path = (char*)malloc(asset_path_str_size);
+            write_str(resources[1].path, asset_path_str_size, "./OBJ/AFRICAN_HEAD_DIFFUSE.BMP");
+            resources[1].state = RESOURCE_STATE_INACTIVE;
 
             game_state = 1;
         } break;
 
         case 1:
         {
-            if (asset->state == ASSET_STATE_INACTIVE)
-            {
-                if (current_resource < (sizeof(resources) / sizeof(resources[0]))
-                    && resources[current_resource].state == RESOURCE_STATE_INACTIVE)
-                {
-                    asset_request(asset, resources[current_resource].path);
-                }
-            }
+            Resource *curres = &resources[curres_idx];
+            int resource_count = sizeof(resources) / sizeof(resources[0]);
 
-            if (asset->state == ASSET_STATE_RESOLVED)
-            {
-                void *data = malloc(asset->size); // alloc memory
-                asset_upload(asset, data);
-            }
+            asset_processing(asset, curres);
 
+            // NOTE(annad): Maybe callback?..
             if (asset->state == ASSET_STATE_UPLOADING)
             {
                 float percent = 100.0f * (float)asset->uploaded / (float)asset->size;
                 printf("Uploading resource %s: %.2f\r", asset->path, percent);
                 fflush(stdout);
+                break;
             }
 
-            if (asset->state == ASSET_STATE_UPLOADED)
+            if (curres->state == RESOURCE_STATE_COMPLETED 
+                && curres_idx < resource_count)
             {
-                printf("Uploading resource %s: [COMPLETE]\n", asset->path);
-                resources[current_resource].data = asset->data; // pick up data
-                resources[current_resource].size = asset->size;
-                resources[current_resource].state = RESOURCE_STATE_COMPLETED;
-                asset_complete(asset);
-            }
-            
-            if (asset->state == ASSET_STATE_RELEASED)
-            {
-                current_resource += 1;
-                asset->state = ASSET_STATE_INACTIVE;
+                printf("Uploading resource %s: [COMPLETE]\n", curres->path);
+                curres_idx += 1;
             }
 
-            if (current_resource == (sizeof(resources) / sizeof(resources[0])))
+            if (curres_idx == (sizeof(resources) / sizeof(resources[0])))
                 game_state = 2;
-            
         } break;
 
         case 2:
@@ -202,6 +234,73 @@ void gtick(Screen *screen, Asset *asset, float dt)
 }
 
 #include "tinyrend.cpp"
+
+void psp_asset_processing(Asset *asset)
+{
+    switch (asset->state)
+    {
+        case ASSET_STATE_INACTIVE:
+        case ASSET_STATE_RESOLVED:
+        case ASSET_STATE_UPLOADED:
+        case ASSET_STATE_RELEASED:
+        {
+            // ... 
+        } break;
+
+        case ASSET_STATE_REQUESTED:
+        {
+            if (asset->ctx != NULL) 
+                break;
+
+            SceIoStat filestat;
+            if (sceIoGetstat(asset->path, &filestat) < 0)
+            {
+                asset->state = ASSET_STATE_UNDEFINED;
+                break;
+            }
+
+            asset->size = filestat.st_size;
+            asset->ctx = malloc(sizeof(SceUID));
+            SceUID *fhandler = (SceUID*)asset->ctx;
+            *fhandler = sceIoOpen(asset->path, PSP_O_RDONLY, 0777);
+
+            asset->state = ASSET_STATE_RESOLVED;
+        } break;
+
+        case ASSET_STATE_UPLOADING:
+        {
+            SceUID fhandler = *((SceUID*)asset->ctx);
+            if (asset->data == NULL)
+            {
+                asset->state = ASSET_STATE_UNDEFINED;
+                break;
+            }
+
+            void *cursor = (void*)(asset->data + asset->uploaded);
+            int chunk_size = 1024; // TODO(annad): Calc optimal variant!
+            asset->uploaded += sceIoRead(fhandler, cursor, chunk_size);
+
+            if (asset->size == asset->uploaded)
+                asset->state = ASSET_STATE_UPLOADED;
+        } break;
+
+        case ASSET_STATE_COMPLETED:
+        {
+            SceUID fhandler = *((SceUID*)asset->ctx);
+            if (sceIoClose(fhandler) < 0)
+                asset->state = ASSET_STATE_UNDEFINED;
+
+            free(asset->ctx);
+            asset->ctx = NULL;
+            asset->state = ASSET_STATE_RELEASED;
+        } break;
+
+        default:
+        {
+            asset->state = ASSET_STATE_UNDEFINED;
+        } break;
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -262,70 +361,8 @@ int main(int argc, char *argv[])
 #endif
 
         gtick(&screen, &asset, 1.0f/60.0f);
-
         // psp asset processing
-        switch (asset.state)
-        {
-            case ASSET_STATE_INACTIVE:
-            {
-                // ... 
-            } break;
-
-            case ASSET_STATE_REQUESTED:
-            {
-                if (asset.ctx != NULL) 
-                    break;
-
-                SceIoStat filestat;
-                if (sceIoGetstat(asset.path, &filestat) < 0)
-                {
-                    asset.state = ASSET_STATE_UNDEFINED;
-                    break;
-                }
-
-                asset.size = filestat.st_size;
-                asset.ctx = malloc(sizeof(SceUID));
-                SceUID *fhandler = (SceUID*)asset.ctx;
-                *fhandler = sceIoOpen(asset.path, PSP_O_RDONLY, 0777);
-
-                asset.state = ASSET_STATE_RESOLVED;
-            } break;
-
-            case ASSET_STATE_UPLOADING:
-            {
-                SceUID fhandler = *((SceUID*)asset.ctx);
-                if (asset.data == NULL)
-                {
-                    asset.state = ASSET_STATE_UNDEFINED;
-                    break;
-                }
-
-                void *cursor = (void*)(asset.data + asset.uploaded);
-                int chunk_size = 1024;
-                asset.uploaded += sceIoRead(fhandler, cursor, chunk_size);
-
-                if (asset.size == asset.uploaded)
-                    asset.state = ASSET_STATE_UPLOADED;
-            } break;
-
-            case ASSET_STATE_COMPLETED:
-            {
-                SceUID fhandler = *((SceUID*)asset.ctx);
-                if (sceIoClose(fhandler) < 0)
-                    asset.state = ASSET_STATE_UNDEFINED;
-
-                free(asset.ctx);
-                asset.ctx = NULL;
-                asset.state = ASSET_STATE_RELEASED;
-            } break;
-
-            default:
-            {
-                asset.state = ASSET_STATE_UNDEFINED;
-            } break;
-        }
-
-        //tiny_renderer_test(&screen);
+        psp_asset_processing(&asset);
         
         // tick
         sceRtcGetCurrentTick(&curTick);
