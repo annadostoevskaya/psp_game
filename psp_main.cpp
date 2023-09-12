@@ -2,12 +2,13 @@
  * File: psp_main.cpp
  * Author: github.com/annadostoevskaya
  * Date: 08/29/2023 21:38:27
- * Last Modified Date: 09/10/2023 20:46:27
+ * Last Modified Date: 09/12/2023 21:16:33
  */
 
 #include <pspkernel.h>
-#include <pspsysmem_kernel.h>
+#include <pspsysmem.h>
 #include <pspmoduleinfo.h>
+#include <pspmodulemgr.h>
 #include <pspdisplay.h>
 #include <pspge.h>
 #include <psprtc.h>
@@ -332,6 +333,17 @@ int main(int argc, char *argv[])
     asset.data = NULL;
     asset.state = ASSET_STATE_INACTIVE;
     asset.path = asset_path;
+
+    SceSize storage_size = 1024 * 1024 * 1024;
+    storage_size *= 16;
+    SceUID blockid = sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "GLOBAL_BLOCK", PSP_SMEM_Low, storage_size, NULL);
+    char *storage = (char*)sceKernelGetBlockHeadAddr(blockid);
+    for (SceSize i = 0; i < storage_size; i += 1)
+    {
+        storage[i] = 0x0;
+    }
+
+    sceKernelFreePartitionMemory(blockid);
 
     for (;;)
     {

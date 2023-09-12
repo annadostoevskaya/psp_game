@@ -1,5 +1,0 @@
-1. Memory Managment PSP
-2. sceDisplayWaitVblankStart(), check it later!
-3. sceGuGetMemory(), github.com:blind-jump-portable/source/platform/psp/glib2d.c
-
-
