@@ -2,7 +2,7 @@
  * File: psp_main.cpp
  * Author: github.com/annadostoevskaya
  * Date: 08/29/2023 21:38:27
- * Last Modified Date: 09/15/2023 01:21:57
+ * Last Modified Date: 09/17/2023 02:29:33
  */
 
 #include <pspkernel.h>
@@ -144,7 +144,7 @@ void gtick(Game *game, Screen *screen, Arena *arena, float dt)
             if (asset->state == Asset::STATE_UPLOADING)
             {
                 float percent = 100.0f * (float)asset->uploaded / (float)asset->size;
-                printf("Uploading resource %s%%: %.2f\r", asset->path, percent);
+                printf("Uploading resource %s: %.2f%%\r", asset->path, percent);
                 fflush(stdout);
                 break;
             }
@@ -178,6 +178,21 @@ void gtick(Game *game, Screen *screen, Arena *arena, float dt)
 
 #include "tinyrend.cpp"
 #include "psp_asset.cpp"
+
+#define PROFILING_START(name) \
+        u64 profiler_StartTick ## name = 0; \
+        sceRtcGetCurrentTick(&profiler_StartTick ## name)
+
+#define PROFILING_END(name) \
+        u64 profiler_EndTick ## name = 0; \
+        sceRtcGetCurrentTick(&profiler_EndTick ## name); \
+        SceFloat32 profiler_Delta ## name = \
+            (SceFloat32)(profiler_EndTick ## name - profiler_StartTick ## name) \
+            / (SceFloat32)(sceRtcGetTickResolution() / 1000); \
+        (void)(profiler_Delta ## name)
+
+#define PROFILING_PRINT(name) \
+        pspDebugScreenPrintf(#name ": %.4fms\n", profiler_Delta ## name)
 
 int main(int argc, char *argv[])
 {
@@ -222,8 +237,13 @@ int main(int argc, char *argv[])
     game.state = Game::STATE_INIT;
     game.asset = &asset;
 
+    PROFILING_START(DebugScreenInit);
+    pspDebugScreenInitEx(screen.buffer, PSP_DISPLAY_PIXEL_FORMAT_8888, 0);
+    PROFILING_END(DebugScreenInit);
+
     for (;;)
     {
+        PROFILING_START(GameLoop);
         // rendering, switch buffer
         sceDisplaySetFrameBuf((void*)screen.buffer, 
             pspLineSize, 
@@ -234,22 +254,31 @@ int main(int argc, char *argv[])
             ? screenBuffers[SCREEN_BUFFER_FIRST] 
             : screenBuffers[SCREEN_BUFFER_SECOND];
 
+        PROFILING_START(ZeroingScreen);
         memory_zeroing(screen.buffer, screen.size);
+        PROFILING_END(ZeroingScreen);
+        pspDebugScreenSetBase(screen.buffer);
+        pspDebugScreenSetXY(0, 0);
+
 
 #if DEBUG_BUILD
-        pspDebugScreenInitEx(screen.buffer, PSP_DISPLAY_PIXEL_FORMAT_8888, 0);
         // pspDebugScreenPrintf("Hello\n");
         SceFloat32 FPS = 1000.0f / deltaTime;
-        pspDebugScreenPrintf("FPS: %f\n", FPS);
+        pspDebugScreenPrintf("FPS: %.4f\n", FPS);
         // pspDebugScreenPrintf("frameTime: %f ms\n", frameTime);
-        pspDebugScreenPrintf("dt: %f ms\n", deltaTime);
+        pspDebugScreenPrintf("dt: %.4f ms\n", deltaTime);
         // pspDebugScreenPrintf("delay: %fms\n", (SceFloat32)delay / 1000.0f);
 #endif
-
         gtick(&game, &screen, &arena, 1.0f/60.0f);
+
         // psp asset processing
         psp_asset_processing(&asset);
-        
+
+        PROFILING_END(GameLoop);
+        PROFILING_PRINT(GameLoop);
+        PROFILING_PRINT(ZeroingScreen);
+        PROFILING_PRINT(DebugScreenInit);
+
         // tick
         sceRtcGetCurrentTick(&curTick);
         deltaTime = psp_calcDeltaTime(curTick, lastTick);
